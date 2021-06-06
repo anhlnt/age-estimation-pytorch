@@ -5,7 +5,6 @@ from contextlib import contextmanager
 import urllib.request
 import numpy as np
 import cv2
-import dlib
 import torch
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
@@ -14,6 +13,8 @@ import torch.utils.data
 import torch.nn.functional as F
 from model import get_model
 from defaults import _C as cfg
+import os
+import time
 
 
 def get_args():
@@ -76,8 +77,78 @@ def yield_images_from_dir(img_dir):
             yield cv2.resize(img, (int(w * r), int(h * r))), img_path.name
 
 
+class Location():
+    def __init__(self, startX, startY, endX, endY):
+        self.startX = startX
+        self.startY = startY
+        self.endX = endX
+        self.endY = endY
+    
+    def top(self):
+        return self.startY
+    
+    def bottom(self):
+        return self.endY
+
+    def left(self):
+        return self.startX
+    
+    def right(self):
+        return self.endX
+
+    def width(self):
+        return self.endX - self.startX
+    
+    def height(self):
+        return self.endY - self.startY
+
+
+def detect_mask(frame, faceNet, maskNet=None):
+	# grab the dimensions of the frame and then construct a blob
+	# from it
+	(h, w) = frame.shape[:2]
+	blob = cv2.dnn.blobFromImage(frame, 1.0, (300, 300),
+                              (104.0, 177.0, 123.0))
+
+	# pass the blob through the network and obtain the face detections
+	faceNet.setInput(blob)
+	detections = faceNet.forward()
+
+	# initialize our list of faces, their corresponding locations,
+	# and the list of predictions from our face mask network
+	locs = []
+
+	# loop over the detections
+	for i in range(0, detections.shape[2]):
+		# extract the confidence (i.e., probability) associated with
+		# the detection
+		confidence = detections[0, 0, i, 2]
+
+		# filter out weak detections by ensuring the confidence is
+		# greater than the minimum confidence
+		if confidence > 0.5:
+		# if confidence > args["confidence"]:
+			# compute the (x, y)-coordinates of the bounding box for
+			# the object
+			box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
+			(startX, startY, endX, endY) = box.astype("int")
+
+			# ensure the bounding boxes fall within the dimensions of
+			# the frame
+			(startX, startY) = (max(0, startX), max(0, startY))
+			(endX, endY) = (min(w - 1, endX), min(h - 1, endY))
+
+			locs.append(Location(startX, startY, endX, endY))
+
+	return locs
+
+
 def main():
     args = get_args()
+    prototxtPath = os.path.sep.join(["face_detector", "deploy.prototxt"])
+    weightsPath = os.path.sep.join(["face_detector", "res10_300x300_ssd_iter_140000.caffemodel"])
+    faceNet = cv2.dnn.readNet(prototxtPath, weightsPath)
+
 
     if args.opts:
         cfg.merge_from_list(args.opts)
@@ -123,17 +194,17 @@ def main():
     model.eval()
     margin = args.margin
     img_dir = args.img_dir
-    detector = dlib.get_frontal_face_detector()
     img_size = cfg.MODEL.IMG_SIZE
     image_generator = yield_images_from_dir(img_dir) if img_dir else yield_images()
+    start = time.time()
 
     with torch.no_grad():
         for img, name in image_generator:
             input_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             img_h, img_w, _ = np.shape(input_img)
 
-            # detect faces using dlib detector
-            detected = detector(input_img, 1)
+            # detect faces using ssd
+            detected = detect_mask(img, faceNet)
             faces = np.empty((len(detected), img_size, img_size, 3))
 
             if len(detected) > 0:
@@ -143,8 +214,7 @@ def main():
                     yw1 = max(int(y1 - margin * h), 0)
                     xw2 = min(int(x2 + margin * w), img_w - 1)
                     yw2 = min(int(y2 + margin * h), img_h - 1)
-                    cv2.rectangle(img, (x1, y1), (x2, y2), (255, 255, 255), 2)
-                    cv2.rectangle(img, (xw1, yw1), (xw2, yw2), (255, 0, 0), 2)
+                    cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 255), 2)
                     faces[i] = cv2.resize(img[yw1:yw2 + 1, xw1:xw2 + 1], (img_size, img_size))
 
                 # predict ages
@@ -158,6 +228,7 @@ def main():
                     label = "{}".format(int(predicted_ages[i]))
                     draw_label(img, (d.left(), d.top()), label)
 
+            draw_label(img, (50, 50), "{:.2f}fps".format(1.0 / (time.time() - start)))
             if args.output_dir is not None:
                 output_path = output_dir.joinpath(name)
                 cv2.imwrite(str(output_path), img)
@@ -167,6 +238,9 @@ def main():
 
                 if key == 27:  # ESC
                     break
+
+            start = time.time()
+            
 
 
 if __name__ == '__main__':
