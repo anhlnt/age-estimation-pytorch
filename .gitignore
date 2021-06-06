@@ -2,3 +2,7 @@ __pycache__
 imgs
 results
 misc/*.pth
+data
+.venv
+checkpoint
+tf_log
