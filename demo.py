@@ -18,7 +18,7 @@ import time
 
 VER = "1.1"
 # MODEL = "epoch054_0.02346_3.9526.pth"
-MODEL = "epoch077_0.01217_3.0266.pth"
+MODEL = "epoch078_0.01209_3.0137.pth"
 
 
 def get_args():
@@ -181,7 +181,7 @@ def main():
 
         if not resume_path.is_file():
             print(f"=> model path is not set; start downloading trained model to {resume_path}")
-            url = f"https://github.com/anhlnt/age-estimation-pytorch/releases/download/{VER}/{MODEL}"
+            url = f"https://github.com/anhlnt/age-estimation-pytorch/releases/download/v{VER}/{MODEL}"
             urllib.request.urlretrieve(url, str(resume_path))
             print("=> download finished")
 
