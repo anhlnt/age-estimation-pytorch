@@ -17,7 +17,7 @@ from torch.utils.tensorboard import SummaryWriter
 import pretrainedmodels
 import pretrainedmodels.utils
 from model import get_model
-from dataset import FaceDataset
+from dataset import FaceDatasetAppa, FaceDatasetImdb
 from defaults import _C as cfg
 
 
@@ -28,7 +28,9 @@ def get_args():
                          and callable(pretrainedmodels.__dict__[name]))
     parser = argparse.ArgumentParser(description=f"available models: {model_names}",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument("--dataset", type=str, required=True, help="Choice 'appa' or 'imdb'")
     parser.add_argument("--data_dir", type=str, required=True, help="Data root directory")
+    parser.add_argument("--csv_path", type=str, help="If dataset is imdb, this is required")
     parser.add_argument("--resume", type=str, default=None, help="Resume from checkpoint if any")
     parser.add_argument("--checkpoint", type=str, default="checkpoint", help="Checkpoint directory")
     parser.add_argument("--tensorboard", type=str, default=None, help="Tensorboard log directory")
@@ -36,6 +38,9 @@ def get_args():
     parser.add_argument("opts", default=[], nargs=argparse.REMAINDER,
                         help="Modify config options using the command-line")
     args = parser.parse_args()
+    assert(args.dataset in ["appa", "imdb"])
+    if args.dataset == "imdb" and args.csv_path is None:
+        parser.error("If dataset is imdb, csv_path is required")
     return args
 
 
@@ -182,12 +187,20 @@ def main():
         cudnn.benchmark = True
 
     criterion = nn.CrossEntropyLoss().to(device)
-    train_dataset = FaceDataset(args.data_dir, "train", img_size=cfg.MODEL.IMG_SIZE, augment=True,
-                                age_stddev=cfg.TRAIN.AGE_STDDEV)
+    if args.dataset == "appa":
+        train_dataset = FaceDatasetAppa(args.data_dir, "train", img_size=cfg.MODEL.IMG_SIZE, augment=True,
+                                        age_stddev=cfg.TRAIN.AGE_STDDEV)
+    else:
+        train_dataset = FaceDatasetImdb(args.csv_path, args.data_dir, "train", img_size=cfg.MODEL.IMG_SIZE, augment=True)
+    print("train_dataset: ", len(train_dataset))
     train_loader = DataLoader(train_dataset, batch_size=cfg.TRAIN.BATCH_SIZE, shuffle=True,
                               num_workers=cfg.TRAIN.WORKERS, drop_last=True)
 
-    val_dataset = FaceDataset(args.data_dir, "valid", img_size=cfg.MODEL.IMG_SIZE, augment=False)
+    if args.dataset == "appa":
+        val_dataset = FaceDatasetAppa(args.data_dir, "valid", img_size=cfg.MODEL.IMG_SIZE, augment=False)
+    else:
+        val_dataset = FaceDatasetImdb(args.csv_path, args.data_dir, "valid", img_size=cfg.MODEL.IMG_SIZE, augment=False)
+    print("val_dataset: ", len(val_dataset))
     val_loader = DataLoader(val_dataset, batch_size=cfg.TEST.BATCH_SIZE, shuffle=False,
                             num_workers=cfg.TRAIN.WORKERS, drop_last=False)
 

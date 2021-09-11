@@ -16,6 +16,10 @@ from defaults import _C as cfg
 import os
 import time
 
+VER = "1.1"
+# MODEL = "epoch054_0.02346_3.9526.pth"
+MODEL = "epoch077_0.01217_3.0266.pth"
+
 
 def get_args():
     parser = argparse.ArgumentParser(description="Age estimation demo",
@@ -28,6 +32,8 @@ def get_args():
                         help="Target image directory; if set, images in image_dir are used instead of webcam")
     parser.add_argument("--output_dir", type=str, default=None,
                         help="Output directory to which resulting images will be stored if set")
+    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
+                        help="Select GPU('cuda') or CPU('cpu') mode")
     parser.add_argument("opts", default=[], nargs=argparse.REMAINDER,
                         help="Modify config options using the command-line")
     args = parser.parse_args()
@@ -83,64 +89,64 @@ class Location():
         self.startY = startY
         self.endX = endX
         self.endY = endY
-    
+
     def top(self):
         return self.startY
-    
+
     def bottom(self):
         return self.endY
 
     def left(self):
         return self.startX
-    
+
     def right(self):
         return self.endX
 
     def width(self):
         return self.endX - self.startX
-    
+
     def height(self):
         return self.endY - self.startY
 
 
 def detect_mask(frame, faceNet, maskNet=None):
-	# grab the dimensions of the frame and then construct a blob
-	# from it
-	(h, w) = frame.shape[:2]
-	blob = cv2.dnn.blobFromImage(frame, 1.0, (300, 300),
-                              (104.0, 177.0, 123.0))
+    # grab the dimensions of the frame and then construct a blob
+    # from it
+    (h, w) = frame.shape[:2]
+    blob = cv2.dnn.blobFromImage(frame, 1.0, (300, 300),
+                                 (104.0, 177.0, 123.0))
 
-	# pass the blob through the network and obtain the face detections
-	faceNet.setInput(blob)
-	detections = faceNet.forward()
+    # pass the blob through the network and obtain the face detections
+    faceNet.setInput(blob)
+    detections = faceNet.forward()
 
-	# initialize our list of faces, their corresponding locations,
-	# and the list of predictions from our face mask network
-	locs = []
+    # initialize our list of faces, their corresponding locations,
+    # and the list of predictions from our face mask network
+    locs = []
 
-	# loop over the detections
-	for i in range(0, detections.shape[2]):
-		# extract the confidence (i.e., probability) associated with
-		# the detection
-		confidence = detections[0, 0, i, 2]
+    # loop over the detections
+    for i in range(0, detections.shape[2]):
+        # extract the confidence (i.e., probability) associated with
+        # the detection
+        confidence = detections[0, 0, i, 2]
 
-		# filter out weak detections by ensuring the confidence is
-		# greater than the minimum confidence
-		if confidence > 0.5:
-		# if confidence > args["confidence"]:
-			# compute the (x, y)-coordinates of the bounding box for
-			# the object
-			box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
-			(startX, startY, endX, endY) = box.astype("int")
+        # filter out weak detections by ensuring the confidence is
+        # greater than the minimum confidence
+        if confidence > 0.5:
+            # if confidence > args["confidence"]:
+            # compute the (x, y)-coordinates of the bounding box for
+            # the object
+            box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
+            (startX, startY, endX, endY) = box.astype("int")
 
-			# ensure the bounding boxes fall within the dimensions of
-			# the frame
-			(startX, startY) = (max(0, startX), max(0, startY))
-			(endX, endY) = (min(w - 1, endX), min(h - 1, endY))
+            # ensure the bounding boxes fall within the dimensions of
+            # the frame
+            (startX, startY) = (max(0, startX), max(0, startY))
+            (endX, endY) = (min(w - 1, endX), min(h - 1, endY))
 
-			locs.append(Location(startX, startY, endX, endY))
+            locs.append(Location(startX, startY, endX, endY))
 
-	return locs
+    return locs
 
 
 def main():
@@ -148,7 +154,6 @@ def main():
     prototxtPath = os.path.sep.join(["face_detector", "deploy.prototxt"])
     weightsPath = os.path.sep.join(["face_detector", "res10_300x300_ssd_iter_140000.caffemodel"])
     faceNet = cv2.dnn.readNet(prototxtPath, weightsPath)
-
 
     if args.opts:
         cfg.merge_from_list(args.opts)
@@ -164,19 +169,19 @@ def main():
 
     # create model
     print("=> creating model '{}'".format(cfg.MODEL.ARCH))
-    model = get_model(model_name=cfg.MODEL.ARCH, pretrained=None)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = get_model(model_name=cfg.MODEL.ARCH, pretrained=cfg.MODEL.PRETRAINED)
+    device = args.device
     model = model.to(device)
 
     # load checkpoint
     resume_path = args.resume
 
     if resume_path is None:
-        resume_path = Path(__file__).resolve().parent.joinpath("misc", "epoch054_0.02346_3.9526.pth")
+        resume_path = Path(__file__).resolve().parent.joinpath("misc", MODEL)
 
         if not resume_path.is_file():
             print(f"=> model path is not set; start downloading trained model to {resume_path}")
-            url = "https://github.com/anhlnt/age-estimation-pytorch/releases/download/1.0.1/epoch054_0.02346_3.9526.pth"
+            url = f"https://github.com/anhlnt/age-estimation-pytorch/releases/download/{VER}/{MODEL}"
             urllib.request.urlretrieve(url, str(resume_path))
             print("=> download finished")
 
@@ -215,17 +220,30 @@ def main():
                     xw2 = min(int(x2 + margin * w), img_w - 1)
                     yw2 = min(int(y2 + margin * h), img_h - 1)
                     cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                    faces[i] = cv2.resize(img[yw1:yw2 + 1, xw1:xw2 + 1], (img_size, img_size))
+                    cv2.imwrite("test/test.jpg", img)
+                    print("name: ", name)
+                    print("face: ", img[yw1:yw2 + 1, xw1:xw2 + 1])
+                    print("x1, y1, x2, y2: ", x1, y1, x2, y2)
+                    print("xw1, yw1, xw2, yw2; ", xw1, yw1, xw2, yw2)
+                    print("img_w, img_h: ", img_w, img_h)
+                    print("len(detected): ", len(detected))
+                    face = img[yw1:yw2 + 1, xw1:xw2 + 1]
+                    if len(face):
+                        faces[i] = cv2.resize(face, (img_size, img_size))
 
                 # predict ages
                 inputs = torch.from_numpy(np.transpose(faces.astype(np.float32), (0, 3, 1, 2))).to(device)
                 outputs = F.softmax(model(inputs), dim=-1).cpu().numpy()
+                # print("outputs: ", outputs)
                 ages = np.arange(0, 101)
                 predicted_ages = (outputs * ages).sum(axis=-1)
 
                 # draw results
                 for i, d in enumerate(detected):
-                    label = "{}".format(int(predicted_ages[i]))
+                    try:
+                        label = "{}".format(int(predicted_ages[i]))
+                    except BaseException:
+                        label = "-"
                     draw_label(img, (d.left(), d.top()), label)
 
             draw_label(img, (50, 50), "{:.2f}fps".format(1.0 / (time.time() - start)))
@@ -240,7 +258,6 @@ def main():
                     break
 
             start = time.time()
-            
 
 
 if __name__ == '__main__':
